@@ -1,0 +1,226 @@
+---
+title: "Webscrapping de dados da Premier League"
+subtitle: "Formulaçao de Request, tratamento da response e organização dos dados por partida e time."
+author: "Jonas Arjona"
+date: "2023-06-22"
+output: 
+  html_document:
+    theme: paper
+---
+
+```{r,include=FALSE}
+load("dados_partidas_22_23.RData")
+```
+
+Neste texto iremos trabalhar com o processo de Webscrapping de estatísticas de futebol dos jogos da Premier League, a mais alta liga de futebol inglesa. Apesar dos dados serem da temporada 22/23, o processo em tese é o mesmo para as outras temporadas. Aqui descrevemos as escolhas feitas, os empecilhos enfrentados e as soluções propostas. Os pacotes usados foram os seguintes:
+```{r,eval=TRUE,message=FALSE,warning=FALSE}
+library(httr2)
+library(jsonlite)
+library(lubridate)
+library(tidyverse)
+```
+
+# O site
+
+Muitos são os sites que armazenam e disponibilizam dados esportivos, alguns mais ou menos interativos, mais ou menos completos Optamos pelo próprio site da [Premier League](%22https://www.premierleague.com/%22) já que ele é a fonte oficial das informações, bem como usa uma apresentação interativa das estatísticas, dificultam a coleta usando do tradicional pacote *rvest.*
+
+Cada temporada consiste em 38 rodadas com 10 jogos cada entre os 20 times da liga. Cada uma das partidas tem um identificador comum e estes seguem uma ordem padrão jogo após jogo. Por exemplo, a primeira partida foi entre Crsytal Palace e Arsenal, no dia 5 de Agosto de 2022, e possui o id 74911. A última partida foi entre Southampton e Liverpool, no dia 28 de Maio de 2023, e possui o id 75290. É possível acessar qualquer partida da temporada introduzindo um número entre 74911 e 75290 após a *url* [https://www.premierleague.com/match/](https://www.premierleague.com/match/75030). Abaixo vemos isso com a partida de id 75001, entre Arsenal e Liverpool.
+
+![Partida 75001.](imagens/partida75001.png)
+
+Em todas as páginas das partidas, temos um resumo da disputa e algumas abas interativas, isto é, que só são preenchidas por alguma informação quando o usuário interaje com elas. A aba de nosso interesse é a "Stats", onde temos uma tabela com o nome de "Match Stats" dispondo das principais estatísticas da partida. São esses os dados que desejamos obter.
+
+![Estatísticas da partida 75001.](imagens/stats_partida75001.png)
+
+Em resumo, os dados coletados foram:
+
+-   Informações das partidas, como data e times participantes;
+
+-   Informações sobre a temporada, como id de partidas, número da rodada;
+
+-   Informações sobre os times, como status (casa ou visitante), id de cada um deles e resultado final da partido;
+
+-   Estatísticas das mais diversas sobre eventos da partida, como chutes a gol, escanteios, faltas, cartões, entre vários outros.
+
+# A escolha da estratégia
+
+Para trabalhar com webscrapping em R temos três opções bastante conhecidas, cada uma crescendo em complexidade: *rvest*, *httr/htrr2* e *RSelenium*.
+
+*rvest* (Wickham, 2022) usa de elementos do código fonte de um site (sejam eles HTML ou CSS) para encontrar as informações desejadas que serão processadas como o usuário quiser. Apesar de ser muito prático, é uma alternativa que falha em sites com conteúdos gerados dinamicamente, seja por APIs ou JavaScript. Esse é o caso do site em questão aqui: as estatísticas são coletadas de outra fonte e apresentadas na tela apenas quando o usuário clica na aba de "Match Stats". Elas não se encontram previamente no código fonte da página.
+
+*RSelenium* (Harrison, 2023), por outro lado, simula um usuário interagindo com a página numa janela de navegador controlada no R. Usando de identificadores de HTML e CSS, é possível indicar ao pacote onde clicar e como, que informações extrair, que opções selecionar, etc. Há alguns ´problemas, porém: ele faz um uso muito mais intensivo da máquina do usuário; é mais suscetível a ser "pego" por mecanismos anti-webscrapping; apresenta algumas dificuldades ao interagir com loops; e constantemente precisa ser manipulado para evitar que as etapas de navegação sejam mais rápidas do que o próprio processamento do site.
+
+A solução usada foi usando o pacote *htrr2* (Wickham, 2023) uma atualização de outro pacote (*htrr)* visando otimizar processos. Em suma, esse pacote simula a interação de um navegador (*client*) a um servidor (*server*), gerando como resposta o resultado de um pedido (*request*).
+
+O resultado da coleta, a response, é um objeto tipo *list* em R com múltiplos níveis. Um deles, o conteúdo da response, está escrito em código hexadecimal que, quando decodificado gera um arquivo em *json* contendo todos os nossos dados de interesse. Para efetuar todas essas transformações usamos o pacote *jsonlite* (Ooms, 2014) e a função *fromJSON.* Ao fim, obtemos um objeto também de tipo *list*, mas agora tratável e utilizável para análises.
+
+# A *request* e as *responses*
+
+O processo de *request*, tratamento das responses e limpeza dos dados consiste numa repetição ao longo das várias partidas de determinadas tarefas. Por isso foram desenvolvidas algumas funções auxiliares que são aplicadas nos links das *requests* de cada uma das partidas. Usamos das funções *map* e associadas do pacote *purrr* para isso.
+
+As duas primeiras delas foram a *colect_api* e a *colect_info*, que farão a *request* na fonte original dos dados que o site da Premier League usa. Uma rápida checagem na aba "Rede" do painel DevTools do Firefox mostra que após atualizar a página de qualquer partida, o site original faz uma *request* a uma API no endereço <https://footballapi.pulselive.com/football/stats/match/>, completando após a barra com o id de cada partida. Além disso, checando no mesmo painel os *headers* da *request*, vemos que o site só permitirá acesso a resposta caso a origem (*acess-control-allow-origin*) do *request* seja o próprio site da Premier League.
+
+![Exemplo de *headers* de uma *request.*](imagens/exemplo_headers_request.png)
+
+A primeira delas monta uma *request* com a origem permitida pela API e executa o processo de coleta. A segunda delas seleciona a parte de interesse da *response* (nesse caso, o *body*), faz a conversão do formato hexadecimal para texto e em seguida interpreta o resultado como um arquivo *json*
+
+```{r,eval=FALSE}
+colect_api <- function(link_root){
+  request(link_root) %>% 
+    req_headers(Origin="https://www.premierleague.com") %>%
+    req_perform()
+  }
+
+colect_info <- function(dados_api){
+  dados_api$body %>% 
+    rawToChar() %>% 
+    fromJSON()
+  }
+```
+
+Feito isso, já é possível obtermos um objeto que contém os dados de nosso interesse, restando apenas a aplicação para cada um dos jogos da temporada. Para gerar tais links, apenas uniremos o endereço original da API com uma sequência de ids partindo do primeiro (74911) até o último (75290).
+
+```{r,eval=FALSE}
+match_link_root <- paste0("https://footballapi.pulselive.com/football/stats/match/",seq(74911,75290))
+```
+
+Passamos então esses links para nossa função *colect_api* e em seguida para a função *colect_info*. Ao invés de dependermos de *loops*, é possível usar a função *map* (e associadas) do pacote *purrr*. Elas servem para aplicar, ao longo de um objeto, uma função específica para cada um dos índices do elemento. Neste caso, coletamos a *response* de cada uma das *requests* e tratamos selecionamos apenas o nível *body*. O resultado final é uma lista onde cada índice é uma *response*. Além disso, renomeamos os elementos gerados pela função *colect_info* para trabalharmos com nomes mais fáceis de referenciar (ao invés de apenas números)
+
+```{r,eval=FALSE}
+APIreq <- map(match_link_root,colect_api)
+
+partidas <- map(APIreq,colect_info)
+names(APIreq) <- paste0("id",seq(74911,75290))
+```
+
+# Tratando os dados da *response*
+Caso observemos rapidamente o conteúdo da *response*, veremos que cada partida possui dois elmentos: *entity* e *data*. O primeiro deles contém informações sobre a partida, como times, data, resultado, rodada, etc. O segundo deles contém o grosso das estatísticas esportivas, como quantidade de chutes, escanteios, faltas, etc. Abaixo constatamos isso para a partida de id 74911. Abaixo temos parte de seus conteúdos.
+
+## {.tabset}
+### Entity
+```{r}
+str(partidas$id74911$entity)
+```
+### Data
+```{r}
+str(partidas$id74911$data)
+```
+##
+
+O principal problema do formato dos dados é a existência de listas dentro de listas com tamanhos diferentes, bem como informações relevantes espalhadas dentro de conteúdo irrelevante. Os próximos passos fazem justamente esse tratamento: primeiro limpando *entity* e segundo *data*. Para isso, nos utilizamos de mais três funções auxiliares: *clean_match_info*, *clean_match_stats* e *pluck_multiple*. 
+
+- *pluck_multiple* cria uma versão "personalizada" da função *pluck* do pacote *purrr*, nos permitindo coletar múltiplas elementos de dentro de uma lista (algo que a função original nao consegue fazer de maneira intuitiva). Seus argumentos são um objeto de tipo lista e um conjunto de nomes de elementos a serem mantidos.
+
+```{r}
+pluck_multiple <- function(obj_list,to_keep){
+  obj_list %>% 
+    keep(names(.) %in% to_keep)}
+```
+
+- *clean_match_info* atua em quatro partes: primeiro, criamos um objeto que armazenará o identificador único de cada linha, a *primary key*, consistindo dos ids de cada time e do id da partida, sendo utilizado posteriormente para unir as informações da partida com as estatísticas; segundo, criamos um objeto que conterá as informações de *entity* e faremos um *unnest_wider* nos vários níveis da lista a fim de facilitar a obtenção de algumas informações; terceiro, convertemos as datas desse segundo objeto em formatos mais úteis (usando o *lubridate*), coletamos apenas algumas das variáveis e unimos-as com nossa *primary key* e com o status do time na partida (time da casa ou visitante); quarto, renomeamos as colunas para formatos mais padronizados e amigáveis.
+
+```{r}
+clean_match_info <- function(list_info){
+  info_id_pk <- paste0(list_info[["entity"]][["teams"]][["team"]][["id"]],
+                        "_",
+                        list_info[["entity"]][["id"]])
+  info_df <- data.frame(list_info[1]) %>% 
+    unnest_wider(col=entity.teams.team,
+                 names_repair = "minimal",
+                 names_sep = "_")
+  info_df_comp <- info_df %>%  
+    mutate(entity.kickoff.label=dmy_hm(entity.kickoff.label)) %>%
+    select(entity.gameweek.gameweek,entity.kickoff.label,entity.teams.team_name,
+           entity.teams.team_id,entity.teams.score,entity.id) %>% 
+    cbind("Team_status"=c("Home","Away"),
+          info_id_pk)
+  names(info_df_comp) <- c("Gameweek","Date_of_match","Team_name",
+                           "Team_id","Team_score","Match_id",
+                           "Team_status","pk")
+  return(info_df_comp)}
+```
+
+- *clean_match_stats* atua em três partes: primeiro, criamos novamente um objeto que servirá de *primary_key*; segundo, selecionamos apenas o elemento *data* e aplicamos a *pluck_multiple* para manter apenas o nome da estatística e o seu valor, usando um *map* para executar a seleção nos dois elementos dentro de *data* (cada um consiste nas estatísicas de um dos dois times); terceiro, usando outro *map*, mudamos o formato dos dados de longo (uma estatística por linha) para largo (uma estatística por coluna), unimos os dois *data.frames* resultantes em um só com *bind_rows* (que aceita uniões de objetos com números distintos de colunas) para, por fim, usar um *cbind* para introduzir nossa *primary_key* no objeto final.
+
+
+```{r}
+clean_match_stats <- function(list_stats){
+  stats_id_pk <- paste0(names(list_stats[[2]]),
+                        "_",
+                        list_stats[["entity"]][["id"]])
+  stats_df <- list_flatten(list_stats[[2]]) %>% 
+    map(pluck_multiple,c("name","value"))
+
+  stats_df_f <- stats_df %>% 
+    map(~pivot_wider(.x,names_from="name")) %>% 
+    bind_rows() %>% 
+    cbind(pk=stats_id_pk)
+  return(stats_df_f)}
+```
+
+Um breve comentário sobre o tamanho das duas funções *clean*. Dado que algumas das funções não lidam bem com o operador *pipe* (onde passamos o resultado de um processo como primeiro argumento do segundo processo), criamos dentro de cada uma delas esses objetos temporários para facilitar as etapas de tratamento. De fato, há uma perda de inteligibilidade do código, o que poderia dificultar um eventual processo de *debug* futuro. Em especial, podemos ainda perder escabilidade das funções, que podem deixar de funcionar já na próxima temporada da Premier League.
+
+Tendo construído nossas funções, aplicamos elas no nosso objeto da *response* usando um *map_dfr*, que aplica as funções desejadas ao longo de um objeto e gera como resultado um *data.frame*. Usamos a função *as_tibble* junto com um *print* para ver algumas das observações de cada objeto.
+
+```{r,eval=FALSE}
+match_info <- map_dfr(partidas,clean_match_info)
+
+match_stats <- map_dfr(partidas,clean_match_stats)
+```
+
+## {.tabset}
+### match_info
+```{r}
+as_tibble(match_info) %>% 
+  print(n=5)
+```
+
+### match_stats
+```{r}
+as_tibble(match_stats) %>% 
+  print(n=5)
+```
+##
+
+Finalmente, unimos os dois objetos com um *inner_join* usando nossa *primary key*.
+
+```{r}
+premierdb_22_23 <- inner_join(match_info,match_stats,
+                              by="pk")
+as_tibble(premierdb_22_23) %>% 
+  print(n=10)
+```
+
+Uma última etapa é executada para finalizar nossa base: lidar com *NAs*. Eles ocorrem porque a função *bind_rows* preserva as colunas das duas bases unidades e preenche as observações que não apresentam algum dos valores com *NAs*. No nosso caso, trata-se de estatísticas que alguns dos times não produziram durante uma determinada partida.
+
+```{r}
+premierdb_22_23[is.na(premierdb_22_23)] <- 0
+```
+
+# O que fazer com a base?
+Agora que temos nossos dados, podemos rodar análises das mais diversas com base nos nossos interesses. Agora notável de menção é a profusão de estatísticas obtidas dessa forma em comparação com aquelas disponíveis no site oficial da Premier League. Elas nos permitem maior especificidade naquilo que desejamos plotar, mas também nos sobrecarregam quanto as decisões a serem feitas.
+
+Abaixo temos um dos possíveis gráficos a serem gerados: um boxplot do números de chutes ao gol por jogo dos líderes da temporada Arsenal e Manchester City ao longo das 38 rodadas.
+
+```{r}
+premierdb_22_23 %>% 
+  filter(Team_name %in% c("Manchester City","Arsenal")) %>% 
+  select(Gameweek,Team_name,total_scoring_att) %>% 
+  ggplot()+
+  geom_boxplot(aes(x=Team_name,y=total_scoring_att))
+```
+
+Pelos resultados vemos que ambos os times foram bastante consistentes com suas tentativas de pontuar, mantendo aproximadamente 50% dos jogos na faixa entre 10 e 20 tentativas. As sombras indicam alguma flexibilidade mas sempre tives casos acima dos 5 chutes para ambos (sendo esse valor o mínimo para Manchester City, dado o ponto preto *outlier*). Também podemos distinguir jogos onde o time jogou como casa ou visitante.
+
+```{r}
+premierdb_22_23 %>% 
+  filter(Team_name %in% c("Manchester City","Arsenal")) %>% 
+  select(Gameweek,Team_name,Team_status,total_scoring_att) %>% 
+  ggplot()+
+  geom_boxplot(aes(x=Team_name,y=total_scoring_att,fill=Team_status))
+```
+
+Há uma tradicional crença de que jogos em casa são mais fáceis que jogos como visitante e esses gráficos parecem confirmar isso. Porém, vemos que a distinção é muito maior para o Arsenal do que para o Manchester City, este último sendo mais consistente com suas estratégias. Talvez esse seja uma das razões pelas quais o primeiro time ficou no topo da tabela por mais de dois terços da duração da temporada e acabou desbancado nas últimas rodadas pelo Manchester City. Um time foi mais consistente que outro.
+
+# O que mais fazer?
+Há várias outras estatísticas na base. Posteriores análises poderão selecionar variáveis de interesse e remover dados desnecessários (como indicadores que pouco nos informam). Além disso, podemos buscar métodos confirmatórios e preditivos mais robustos a fim de gerar insights relevantes sobre o desempenho dos clubes ao longo da temporada, como análise de clusters para estratégias comuns ou regressões lineares e/ou logísticas.
