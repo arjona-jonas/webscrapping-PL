@@ -50,7 +50,7 @@ Para trabalhar com webscrapping em R temos três opções bastante conhecidas, c
 
 *RSelenium* (Harrison, 2023), por outro lado, simula um usuário interagindo com a página numa janela de navegador controlada no R. Usando de identificadores de HTML e CSS, é possível indicar ao pacote onde clicar e como, que informações extrair, que opções selecionar, etc. Há alguns ´problemas, porém: ele faz um uso muito mais intensivo da máquina do usuário; é mais suscetível a ser "pego" por mecanismos anti-webscrapping; apresenta algumas dificuldades ao interagir com loops; e constantemente precisa ser manipulado para evitar que as etapas de navegação sejam mais rápidas do que o próprio processamento do site.
 
-A solução usada foi usando o pacote *htrr2* (Wickham, 2023) uma atualização de outro pacote (*htrr)* visando otimizar processos. Em suma, esse pacote simula a interação de um navegador (*client*) a um servidor (*server*), gerando como resposta o resultado de um pedido (*request*).
+A solução escolhida foi usar o pacote *htrr2* (Wickham, 2023), uma atualização de outro pacote (*htrr)* visando otimizar processos. Em suma, esse pacote simula a interação de um navegador (*client*) a um servidor (*server*), gerando como resposta o resultado de um pedido (*request*).
 
 O resultado da coleta, a response, é um objeto tipo *list* em R com múltiplos níveis. Um deles, o conteúdo da response, está escrito em código hexadecimal que, quando decodificado gera um arquivo em *json* contendo todos os nossos dados de interesse. Para efetuar todas essas transformações usamos o pacote *jsonlite* (Ooms, 2014) e a função *fromJSON.* Ao fim, obtemos um objeto também de tipo *list*, mas agora tratável e utilizável para análises.
 

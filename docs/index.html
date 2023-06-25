@@ -455,13 +455,13 @@ Stats”. Elas não se encontram previamente no código fonte da página.</p>
 usuário interagindo com a página numa janela de navegador controlada no
 R. Usando de identificadores de HTML e CSS, é possível indicar ao pacote
 onde clicar e como, que informações extrair, que opções selecionar, etc.
-Há alguns ´problemas, porém: ele faz um uso muito mais intensivo da
+Há alguns problemas, porém: ele faz um uso muito mais intensivo da
 máquina do usuário; é mais suscetível a ser “pego” por mecanismos
 anti-webscrapping; apresenta algumas dificuldades ao interagir com
 loops; e constantemente precisa ser manipulado para evitar que as etapas
 de navegação sejam mais rápidas do que o próprio processamento do
 site.</p>
-<p>A solução usada foi usando o pacote <em>htrr2</em> (Wickham, 2023)
+<p>A solução escolhida foi usar o pacote <em>htrr2</em> (Wickham, 2023)
 uma atualização de outro pacote (<em>htrr)</em> visando otimizar
 processos. Em suma, esse pacote simula a interação de um navegador
 (<em>client</em>) a um servidor (<em>server</em>), gerando como resposta
